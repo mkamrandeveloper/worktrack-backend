@@ -81,7 +81,7 @@ router.post('/signup/join-org', async (req, res) => {
 // ── GET /api/auth/orgs ────────────────────────────────────────────────────────
 router.get('/orgs', async (req, res) => {
   try {
-    const orgs = await dbAll('SELECT id, name, team_size as teamSize FROM organizations ORDER BY name');
+    const orgs = await dbAll('SELECT id, name, team_size as "teamSize" FROM organizations ORDER BY name');
     res.json(orgs);
   } catch (err) {
     res.status(500).json({ error: err.message });

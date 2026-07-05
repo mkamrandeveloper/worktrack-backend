@@ -25,8 +25,8 @@ router.get('/assigned', async (req, res) => {
   try {
     const tasks = await dbAll(
       `SELECT *,
-        ROUND(MAX(0, estimated_hours - logged_hours), 2) as remainingHours,
-        CASE WHEN estimated_hours > 0 THEN MIN(100, ROUND((logged_hours / estimated_hours) * 100)) ELSE 0 END as progressPercent
+        ROUND(GREATEST(0, estimated_hours - logged_hours)::numeric, 2) as "remainingHours",
+        CASE WHEN estimated_hours > 0 THEN LEAST(100, ROUND(((logged_hours / estimated_hours) * 100)::numeric)) ELSE 0 END as "progressPercent"
        FROM tasks WHERE assignee_id=? ORDER BY created_at DESC`,
       [req.user.id]
     );

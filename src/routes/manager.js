@@ -17,7 +17,7 @@ router.get('/team', async (req, res) => {
     const orgId = req.user.organization_id;
 
     const members = await dbAll(
-      `SELECT id, name, email, status, drive_folder_url as driveFolderUrl FROM users
+      `SELECT id, name, email, status, drive_folder_url as "driveFolderUrl" FROM users
        WHERE organization_id=? AND role='EMPLOYEE' AND status='ACTIVE' ORDER BY name`,
       [orgId]
     );
@@ -162,8 +162,8 @@ router.get('/employees/:id/tasks', async (req, res) => {
   try {
     const tasks = await dbAll(
       `SELECT *, 
-        ROUND(MAX(0, estimated_hours - logged_hours), 2) as remainingHours,
-        CASE WHEN estimated_hours > 0 THEN MIN(100, ROUND((logged_hours / estimated_hours) * 100)) ELSE 0 END as progressPercent
+        ROUND(GREATEST(0, estimated_hours - logged_hours)::numeric, 2) as "remainingHours",
+        CASE WHEN estimated_hours > 0 THEN LEAST(100, ROUND(((logged_hours / estimated_hours) * 100)::numeric)) ELSE 0 END as "progressPercent"
        FROM tasks WHERE assignee_id=? AND organization_id=? ORDER BY created_at DESC`,
       [req.params.id, req.user.organization_id]
     );
