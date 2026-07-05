@@ -7,7 +7,8 @@ RUN npm ci
 
 COPY . .
 
-# Expose the port (Hugging Face Spaces requires port 7860 by default)
+# Environment variables
+ENV NODE_ENV=production
 ENV PORT=7860
 EXPOSE 7860
 
