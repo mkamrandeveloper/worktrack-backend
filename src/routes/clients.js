@@ -146,14 +146,14 @@ router.post('/invite', requireAuth, requireManagerOrAbove, async (req, res) => {
     await dbRun('UPDATE projects SET client_invite_token=?, client_email=? WHERE id=?', [token, clientEmail, projectId]);
 
     const baseUrl = process.env.APP_BASE_URL || 'http://localhost:3001';
-    await sendClientInvitation({
+    sendClientInvitation({
       to: clientEmail,
       clientName: clientName || 'Client',
       projectName: project.name,
       orgName: 'WorkTrack',
       inviteUrl: `${baseUrl}/client-portal?token=${token}`,
       inviteToken: token,
-    });
+    }).catch((err) => console.warn('Client invitation email failed:', err.message));
 
     res.json({ success: true, portalUrl: `${baseUrl}/client-portal?token=${token}` });
   } catch (err) {

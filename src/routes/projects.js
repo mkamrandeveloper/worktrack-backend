@@ -135,17 +135,20 @@ router.post('/', requireManagerOrAbove, async (req, res) => {
       [id, req.user.id, 'manager']
     );
 
-    // Send client invitation if email provided
+    // Send client invitation if email provided. Fire-and-forget: SMTP (especially
+    // Gmail from a cloud IP) can stall well past the client's request timeout,
+    // which would otherwise block project creation from ever completing its
+    // response even though the project row is already committed.
     if (clientEmail && inviteToken) {
       const baseUrl = process.env.APP_BASE_URL || 'http://localhost:3001';
-      await sendClientInvitation({
+      sendClientInvitation({
         to: clientEmail,
         clientName: clientName || 'Client',
         projectName: name,
         orgName: req.user.organization_name || 'WorkTrack',
         inviteUrl: `${baseUrl}/client-portal?token=${inviteToken}`,
         inviteToken,
-      });
+      }).catch((err) => console.warn('Client invitation email failed:', err.message));
     }
 
     const project = await dbGet('SELECT * FROM projects WHERE id = ?', [id]);
