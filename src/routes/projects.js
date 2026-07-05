@@ -3,6 +3,9 @@ const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbRun, dbAll } = require('../database');
 const { requireAuth, requireManagerOrAbove, requireAdminOrAbove, canViewOthers } = require('../middleware/auth');
 const { sendClientInvitation } = require('../services/emailService');
+const { createNotification } = require('./notifications');
+const { emitToUser } = require('../socket');
+const { TASK_SELECT_FIELDS } = require('../utils/taskSelect');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -237,7 +240,7 @@ router.get('/:id/tasks', async (req, res) => {
     }
 
     const tasks = await dbAll(
-      `SELECT t.*, u.name as assignee_name FROM tasks t
+      `SELECT ${TASK_SELECT_FIELDS} FROM tasks t
        LEFT JOIN users u ON u.id = t.assignee_id
        WHERE t.project_id=? AND t.organization_id=? ORDER BY t.created_at DESC`,
       [req.params.id, orgId]
@@ -271,9 +274,18 @@ router.post('/:id/tasks', requireManagerOrAbove, async (req, res) => {
     }
 
     const task = await dbGet(
-      `SELECT t.*, u.name as assignee_name FROM tasks t LEFT JOIN users u ON u.id=t.assignee_id WHERE t.id=?`,
+      `SELECT ${TASK_SELECT_FIELDS} FROM tasks t LEFT JOIN users u ON u.id=t.assignee_id WHERE t.id=?`,
       [id]
     );
+
+    if (assigneeId) {
+      createNotification(
+        assigneeId, orgId, 'task_assigned', 'New Task Assigned',
+        `You've been assigned "${title}" in ${project.name}.`, { taskId: id, projectId: project.id }
+      ).catch((err) => console.warn('Notification create failed:', err.message));
+      emitToUser(assigneeId, 'task:assigned', { task });
+    }
+
     res.status(201).json(task);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -313,9 +325,18 @@ router.patch('/:id/tasks/:taskId', async (req, res) => {
     }
 
     const updated = await dbGet(
-      `SELECT t.*, u.name as assignee_name FROM tasks t LEFT JOIN users u ON u.id=t.assignee_id WHERE t.id=?`,
+      `SELECT ${TASK_SELECT_FIELDS} FROM tasks t LEFT JOIN users u ON u.id=t.assignee_id WHERE t.id=?`,
       [req.params.taskId]
     );
+
+    if (assigneeId && assigneeId !== task.assignee_id) {
+      createNotification(
+        assigneeId, orgId, 'task_assigned', 'Task Assigned To You',
+        `You've been assigned "${updated.title}".`, { taskId: updated.id, projectId: req.params.id }
+      ).catch((err) => console.warn('Notification create failed:', err.message));
+      emitToUser(assigneeId, 'task:assigned', { task: updated });
+    }
+
     res.json(updated);
   } catch (err) {
     res.status(500).json({ error: err.message });

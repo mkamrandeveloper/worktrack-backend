@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbRun, dbAll } = require('../database');
 const { requireAuth, requireStaff } = require('../middleware/auth');
 const { emitToOrg } = require('../socket');
+const { TASK_SELECT_FIELDS } = require('../utils/taskSelect');
 const router = express.Router();
 
 async function emitTimerActivity(orgId, userId, taskId, status) {
@@ -24,10 +25,10 @@ router.use(requireAuth, requireStaff);
 router.get('/assigned', async (req, res) => {
   try {
     const tasks = await dbAll(
-      `SELECT *,
-        ROUND(GREATEST(0, estimated_hours - logged_hours)::numeric, 2) as "remainingHours",
-        CASE WHEN estimated_hours > 0 THEN LEAST(100, ROUND(((logged_hours / estimated_hours) * 100)::numeric)) ELSE 0 END as "progressPercent"
-       FROM tasks WHERE assignee_id=? ORDER BY created_at DESC`,
+      `SELECT ${TASK_SELECT_FIELDS}
+       FROM tasks t
+       LEFT JOIN users u ON u.id = t.assignee_id
+       WHERE t.assignee_id=? ORDER BY t.created_at DESC`,
       [req.user.id]
     );
     res.json(tasks);

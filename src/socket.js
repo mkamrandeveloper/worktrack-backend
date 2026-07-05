@@ -14,4 +14,10 @@ function emitToOrg(organizationId, event, payload) {
   ioInstance.to(orgRoom(organizationId)).emit(event, payload);
 }
 
-module.exports = { setIO, emitToOrg, orgRoom };
+/** Send an event only to sockets belonging to one specific user (server.js joins socket.join(userId) on connect). */
+function emitToUser(userId, event, payload) {
+  if (!ioInstance || !userId) return;
+  ioInstance.to(userId).emit(event, payload);
+}
+
+module.exports = { setIO, emitToOrg, emitToUser, orgRoom };

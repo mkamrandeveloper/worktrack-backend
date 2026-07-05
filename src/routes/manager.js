@@ -6,6 +6,7 @@ const { requireAuth, requireManager, requireManagerOrAbove, requireAdminOrAbove 
 const { setupEmployeeFolder } = require('../services/driveService');
 const { sendEmployeeCredentials } = require('../services/emailService');
 const { createNotification } = require('./notifications');
+const { emitToUser } = require('../socket');
 const router = express.Router();
 
 // All manager routes require auth + manager-or-above role
@@ -72,6 +73,15 @@ router.post('/tasks', async (req, res) => {
     );
 
     const task = await dbGet(`SELECT t.*, u.name as assignee_name FROM tasks t LEFT JOIN users u ON t.assignee_id=u.id WHERE t.id=?`, [taskId]);
+
+    if (assigneeId) {
+      createNotification(
+        assigneeId, req.user.organization_id, 'task_assigned', 'New Task Assigned',
+        `You've been assigned "${title}".`, { taskId }
+      ).catch((err) => console.warn('Notification create failed:', err.message));
+      emitToUser(assigneeId, 'task:assigned', { task });
+    }
+
     res.status(201).json({
       ...task,
       remainingHours: task.estimated_hours,
