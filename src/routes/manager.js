@@ -6,7 +6,7 @@ const { requireAuth, requireManager, requireManagerOrAbove, requireAdminOrAbove 
 const { setupEmployeeFolder } = require('../services/driveService');
 const { sendEmployeeCredentials } = require('../services/emailService');
 const { createNotification } = require('./notifications');
-const { emitToUser } = require('../socket');
+const { TASK_SELECT_FIELDS } = require('../utils/taskSelect');
 const router = express.Router();
 
 // All manager routes require auth + manager-or-above role
@@ -36,57 +36,19 @@ router.get('/team', async (req, res) => {
 });
 
 // ── GET /api/manager/tasks ────────────────────────────────────────────────────
+// Org-wide task listing (read-only) — tasks are only ever created inside a
+// project (see projects.js POST /:id/tasks); there is no standalone
+// task-creation route here anymore.
 router.get('/tasks', async (req, res) => {
   try {
     const orgId = req.user.organization_id;
     const tasks = await dbAll(
-      `SELECT t.*, u.name as assignee_name, u.email as assignee_email
+      `SELECT ${TASK_SELECT_FIELDS}, u.email as "assigneeEmail"
        FROM tasks t LEFT JOIN users u ON t.assignee_id = u.id
        WHERE t.organization_id=? ORDER BY t.created_at DESC`,
       [orgId]
     );
-    // Add computed remaining hours
-    const enriched = tasks.map(t => ({
-      ...t,
-      remainingHours: Math.max(0, (t.estimated_hours || 0) - (t.logged_hours || 0)),
-      progressPercent: t.estimated_hours > 0
-        ? Math.min(100, Math.round((t.logged_hours / t.estimated_hours) * 100))
-        : 0,
-    }));
-    res.json(enriched);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ── POST /api/manager/tasks ───────────────────────────────────────────────────
-router.post('/tasks', async (req, res) => {
-  try {
-    const { title, description, assigneeId, estimatedHours, deadline, customScreenshotInterval } = req.body;
-    if (!title) return res.status(400).json({ error: 'Title is required' });
-
-    const taskId = uuidv4();
-    await dbRun(
-      `INSERT INTO tasks (id, organization_id, assignee_id, created_by, title, description, estimated_hours, deadline, custom_screenshot_interval)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [taskId, req.user.organization_id, assigneeId || null, req.user.id, title, description || '', estimatedHours || 1, deadline || null, customScreenshotInterval || null]
-    );
-
-    const task = await dbGet(`SELECT t.*, u.name as assignee_name FROM tasks t LEFT JOIN users u ON t.assignee_id=u.id WHERE t.id=?`, [taskId]);
-
-    if (assigneeId) {
-      createNotification(
-        assigneeId, req.user.organization_id, 'task_assigned', 'New Task Assigned',
-        `You've been assigned "${title}".`, { taskId }
-      ).catch((err) => console.warn('Notification create failed:', err.message));
-      emitToUser(assigneeId, 'task:assigned', { task });
-    }
-
-    res.status(201).json({
-      ...task,
-      remainingHours: task.estimated_hours,
-      progressPercent: 0,
-    });
+    res.json(tasks);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -171,10 +133,9 @@ router.post('/employees', async (req, res) => {
 router.get('/employees/:id/tasks', async (req, res) => {
   try {
     const tasks = await dbAll(
-      `SELECT *, 
-        ROUND(GREATEST(0, estimated_hours - logged_hours)::numeric, 2) as "remainingHours",
-        CASE WHEN estimated_hours > 0 THEN LEAST(100, ROUND(((logged_hours / estimated_hours) * 100)::numeric)) ELSE 0 END as "progressPercent"
-       FROM tasks WHERE assignee_id=? AND organization_id=? ORDER BY created_at DESC`,
+      `SELECT ${TASK_SELECT_FIELDS} FROM tasks t
+       LEFT JOIN users u ON u.id = t.assignee_id
+       WHERE t.assignee_id=? AND t.organization_id=? ORDER BY t.created_at DESC`,
       [req.params.id, req.user.organization_id]
     );
     res.json(tasks);
