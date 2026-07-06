@@ -188,11 +188,26 @@ async function uploadScreenshot(userId, imageBuffer, filename) {
       name: filename,
       parents: folderId ? [folderId] : undefined,
     },
-    media: { mimeType: 'image/png', body: stream },
+    media: { mimeType: 'image/jpeg', body: stream },
     fields: 'id, webViewLink',
   });
 
   return { fileId: res.data.id, fileUrl: res.data.webViewLink };
+}
+
+// Stream a screenshot's raw image bytes from Drive (used by the image-proxy
+// route so the app never needs to make Drive files publicly shareable —
+// access is gated by our own RBAC, not Drive's sharing settings).
+async function downloadScreenshot(organizationId, driveFileId) {
+  const tokens = await getTokensForOrg(organizationId);
+  if (!tokens) throw new Error('Drive not connected');
+
+  const drive = getDriveClient(tokens);
+  const res = await drive.files.get(
+    { fileId: driveFileId, alt: 'media' },
+    { responseType: 'stream' }
+  );
+  return res.data; // readable stream
 }
 
 module.exports = {
@@ -202,4 +217,5 @@ module.exports = {
   setupOrgFolders,
   setupEmployeeFolder,
   uploadScreenshot,
+  downloadScreenshot,
 };

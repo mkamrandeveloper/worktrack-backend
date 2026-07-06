@@ -3,12 +3,123 @@ const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbRun, dbAll } = require('../database');
 const { requireAuth, requireManagerOrAbove, canViewOthers } = require('../middleware/auth');
-const { uploadScreenshot } = require('../services/driveService');
+const { uploadScreenshot, downloadScreenshot } = require('../services/driveService');
 const router = express.Router();
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 router.use(requireAuth);
+
+// ── GET /api/screenshots ──────────────────────────────────────────────────────
+// Unified, role-scoped listing behind the new dedicated Screenshots page.
+// OWNER/ADMIN/MANAGER: org-wide, optionally filtered to one employee (?userId=).
+// EMPLOYEE: always pinned to themselves regardless of ?userId=.
+// CLIENT: only screenshots whose task belongs to one of their invited projects.
+router.get('/', async (req, res) => {
+  try {
+    const { userId, projectId, from, to, limit, offset } = req.query;
+    const role = req.user.role;
+    const lim = Math.min(parseInt(limit || '40', 10) || 40, 200);
+    const off = parseInt(offset || '0', 10) || 0;
+
+    const conditions = ['u.organization_id = ?', "s.upload_status = 'uploaded'"];
+    const params = [req.user.organization_id];
+
+    if (canViewOthers(role)) {
+      if (userId) {
+        conditions.push('s.user_id = ?');
+        params.push(userId);
+      }
+    } else if (role === 'CLIENT') {
+      conditions.push('t.project_id IN (SELECT project_id FROM project_members WHERE user_id = ?)');
+      params.push(req.user.id);
+    } else {
+      conditions.push('s.user_id = ?');
+      params.push(req.user.id);
+    }
+
+    if (projectId) {
+      conditions.push('t.project_id = ?');
+      params.push(projectId);
+    }
+    if (from) {
+      conditions.push('s.captured_at >= ?::timestamp');
+      params.push(from);
+    }
+    if (to) {
+      conditions.push('s.captured_at <= ?::timestamp');
+      params.push(to);
+    }
+
+    params.push(lim, off);
+
+    const screenshots = await dbAll(
+      `SELECT
+         s.id,
+         s.captured_at as "capturedAt",
+         s.upload_status as "uploadStatus",
+         s.drive_file_id as "driveFileId",
+         s.drive_file_url as "driveFileUrl",
+         s.user_id as "userId",
+         u.name as "employeeName",
+         s.task_id as "taskId",
+         t.title as "taskTitle",
+         t.project_id as "projectId",
+         p.name as "projectName"
+       FROM screenshots s
+       JOIN users u ON u.id = s.user_id
+       LEFT JOIN tasks t ON t.id = s.task_id
+       LEFT JOIN projects p ON p.id = t.project_id
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY s.captured_at DESC
+       LIMIT ? OFFSET ?`,
+      params
+    );
+
+    res.json(screenshots);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/screenshots/:id/image ────────────────────────────────────────────
+// Streams the raw image bytes from Drive so files never need to be made
+// Drive-shareable — access is gated entirely by our own RBAC below.
+router.get('/:id/image', async (req, res) => {
+  try {
+    const row = await dbGet(
+      `SELECT s.id, s.drive_file_id, s.user_id, u.organization_id as org_id, t.project_id as project_id
+       FROM screenshots s
+       JOIN users u ON u.id = s.user_id
+       LEFT JOIN tasks t ON t.id = s.task_id
+       WHERE s.id = ?`,
+      [req.params.id]
+    );
+    if (!row || !row.drive_file_id) return res.status(404).json({ error: 'Screenshot not found' });
+    if (row.org_id !== req.user.organization_id) return res.status(403).json({ error: 'Forbidden' });
+
+    if (!canViewOthers(req.user.role)) {
+      if (req.user.role === 'CLIENT') {
+        if (!row.project_id) return res.status(403).json({ error: 'Forbidden' });
+        const member = await dbGet(
+          'SELECT 1 FROM project_members WHERE project_id=? AND user_id=?',
+          [row.project_id, req.user.id]
+        );
+        if (!member) return res.status(403).json({ error: 'Forbidden' });
+      } else if (row.user_id !== req.user.id) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+    }
+
+    const stream = await downloadScreenshot(row.org_id, row.drive_file_id);
+    res.setHeader('Content-Type', 'image/jpeg');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    stream.on('error', () => res.status(502).end());
+    stream.pipe(res);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ── POST /api/screenshots/upload ──────────────────────────────────────────────
 // Called by the desktop app's ScreenshotService after capturing
@@ -56,7 +167,9 @@ router.get('/recent', async (req, res) => {
   try {
     const userId = req.user.id;
     const screenshots = await dbAll(
-      `SELECT id, captured_at, upload_status, drive_file_url, error, task_id FROM screenshots
+      `SELECT id, captured_at as "capturedAt", upload_status as "uploadStatus",
+              drive_file_url as "driveFileUrl", error, task_id as "taskId"
+       FROM screenshots
        WHERE user_id=? ORDER BY captured_at DESC LIMIT 10`,
       [userId]
     );
@@ -73,7 +186,9 @@ router.get('/employee/:userId', requireManagerOrAbove, async (req, res) => {
     const target = await dbGet('SELECT id FROM users WHERE id=? AND organization_id=?', [req.params.userId, req.user.organization_id]);
     if (!target) return res.status(404).json({ error: 'Employee not found' });
     const screenshots = await dbAll(
-      `SELECT id, captured_at, upload_status, drive_file_url, task_id FROM screenshots
+      `SELECT id, captured_at as "capturedAt", upload_status as "uploadStatus",
+              drive_file_url as "driveFileUrl", task_id as "taskId"
+       FROM screenshots
        WHERE user_id=? ORDER BY captured_at DESC LIMIT 50`,
       [req.params.userId]
     );
@@ -101,7 +216,8 @@ router.get('/project/:projectId', async (req, res) => {
     }
 
     const screenshots = await dbAll(
-      `SELECT s.id, s.captured_at, s.upload_status, s.drive_file_url, s.task_id, u.name as employee_name
+      `SELECT s.id, s.captured_at as "capturedAt", s.upload_status as "uploadStatus",
+              s.drive_file_url as "driveFileUrl", s.task_id as "taskId", u.name as "employeeName"
        FROM screenshots s
        JOIN tasks t ON t.id = s.task_id
        LEFT JOIN users u ON u.id = s.user_id
