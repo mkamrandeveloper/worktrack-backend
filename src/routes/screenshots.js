@@ -82,6 +82,79 @@ router.get('/', async (req, res) => {
   }
 });
 
+// ── GET /api/screenshots/breaks ───────────────────────────────────────────────
+// Break intervals for the Screenshots page's timeline, so a gap in captures
+// reads as "on break" instead of looking like missing/failed data. Not
+// project-scoped (breaks aren't tied to a project) — CLIENT gets none.
+router.get('/breaks', async (req, res) => {
+  try {
+    const { userId, from, to } = req.query;
+    const role = req.user.role;
+
+    if (role === 'CLIENT') return res.json([]);
+
+    const conditions = ["tl.organization_id = ?", "tl.type IN ('break_start','break_end')"];
+    const params = [req.user.organization_id];
+
+    if (canViewOthers(role)) {
+      if (userId) {
+        conditions.push('tl.user_id = ?');
+        params.push(userId);
+      }
+    } else {
+      conditions.push('tl.user_id = ?');
+      params.push(req.user.id);
+    }
+    if (from) {
+      conditions.push('tl.timestamp >= ?::timestamp');
+      params.push(from);
+    }
+    if (to) {
+      conditions.push('tl.timestamp <= ?::timestamp');
+      params.push(to);
+    }
+
+    const rows = await dbAll(
+      `SELECT tl.user_id as "userId", u.name as "employeeName", tl.type, tl.timestamp
+       FROM time_logs tl
+       JOIN users u ON u.id = tl.user_id
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY tl.user_id, tl.timestamp ASC`,
+      params
+    );
+
+    // Pair each break_start with the next break_end for that same user.
+    const breaks = [];
+    const openByUser = {};
+    for (const row of rows) {
+      if (row.type === 'break_start') {
+        openByUser[row.userId] = row;
+      } else if (row.type === 'break_end' && openByUser[row.userId]) {
+        breaks.push({
+          userId: row.userId,
+          employeeName: row.employeeName,
+          start: openByUser[row.userId].timestamp,
+          end: row.timestamp,
+        });
+        delete openByUser[row.userId];
+      }
+    }
+    // Any still-open break (no matching end yet) is an ongoing break.
+    for (const userId of Object.keys(openByUser)) {
+      breaks.push({
+        userId,
+        employeeName: openByUser[userId].employeeName,
+        start: openByUser[userId].timestamp,
+        end: null,
+      });
+    }
+
+    res.json(breaks);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── GET /api/screenshots/:id/image ────────────────────────────────────────────
 // Streams the raw image bytes from Drive so files never need to be made
 // Drive-shareable — access is gated entirely by our own RBAC below.
