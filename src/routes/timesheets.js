@@ -13,6 +13,27 @@ const LOG_LABELS = {
   manual: 'Manual Entry',
 };
 
+// The frontend's AttendanceRecord type is entirely camelCase; the attendance
+// table itself is snake_case, so every consumer of buildDailyEntry needs this
+// mapped or fields like clockInTime/clockOutTime silently come back undefined.
+function toAttendanceRecord(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    organizationId: row.organization_id,
+    date: row.date,
+    clockInTime: row.clock_in_time,
+    clockOutTime: row.clock_out_time,
+    totalWorkSeconds: row.total_work_seconds || 0,
+    totalBreakSeconds: row.total_break_seconds || 0,
+    totalIdleSeconds: row.total_idle_seconds || 0,
+    totalOvertimeSeconds: row.total_overtime_seconds || 0,
+    status: row.status,
+    isLate: !!row.is_late,
+  };
+}
+
 // Helper: Build daily timesheet entry from attendance + timelogs, including a
 // merged chronological activity timeline for the drill-down detail view.
 async function buildDailyEntry(userId, orgId, date, includeTimeline = false) {
@@ -37,7 +58,9 @@ async function buildDailyEntry(userId, orgId, date, includeTimeline = false) {
 
   const entry = {
     date,
-    attendance: attendance || { status: 'absent', total_work_seconds: 0, total_break_seconds: 0 },
+    attendance: toAttendanceRecord(attendance) || {
+      status: 'absent', totalWorkSeconds: 0, totalBreakSeconds: 0, totalIdleSeconds: 0, totalOvertimeSeconds: 0,
+    },
     logs,
     tasks,
     workHours: attendance ? Math.round(attendance.total_work_seconds / 36) / 100 : 0,
