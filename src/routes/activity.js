@@ -31,9 +31,4 @@ router.post('/heartbeat', async (req, res) => {
   }
 });
 
-// ── POST /api/activity/sync ───────────────────────────────────────────────────
-router.post('/sync', async (req, res) => {
-  res.json({ synced: true });
-});
-
 module.exports = router;

@@ -3,7 +3,6 @@ const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbRun, dbAll } = require('../database');
 const { generateAccessToken, generateRefreshToken } = require('../middleware/auth');
-const { setupEmployeeFolder } = require('../services/driveService');
 const router = express.Router();
 
 // ── POST /api/auth/signup/create-org ─────────────────────────────────────────
@@ -42,7 +41,11 @@ router.post('/signup/create-org', async (req, res) => {
     return res.status(201).json({
       tokens: { accessToken, refreshToken, expiresAt: Date.now() + 86400000 },
       user: { id: user.id, name: user.name, email: user.email, role: user.role, organizationId: user.organization_id },
-      organization: { id: org.id, name: org.name, plan: 'professional' }
+      organization: {
+        id: org.id, name: org.name, plan: 'professional',
+        screenshotInterval: org.screenshot_interval, teamSize: org.team_size,
+        driveFolderUrl: org.drive_folder_url,
+      }
     });
   } catch (err) {
     console.error('Signup error:', err);
@@ -114,7 +117,11 @@ router.post('/login', async (req, res) => {
     res.json({
       tokens: { accessToken, refreshToken, expiresAt: Date.now() + 86400000 },
       user: { id: user.id, name: user.name, email: user.email, role: user.role, organizationId: user.organization_id },
-      organization: org ? { id: org.id, name: org.name, plan: 'professional' } : null
+      organization: org ? {
+        id: org.id, name: org.name, plan: 'professional',
+        screenshotInterval: org.screenshot_interval, teamSize: org.team_size,
+        driveFolderUrl: org.drive_folder_url,
+      } : null
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -164,7 +171,11 @@ router.get('/me', require('../middleware/auth').requireAuth, async (req, res) =>
   const org = await dbGet('SELECT * FROM organizations WHERE id = ?', [req.user.organization_id]);
   res.json({
     user: { id: req.user.id, name: req.user.name, email: req.user.email, role: req.user.role, organizationId: req.user.organization_id },
-    organization: org ? { id: org.id, name: org.name } : null
+    organization: org ? {
+      id: org.id, name: org.name,
+      screenshotInterval: org.screenshot_interval, teamSize: org.team_size,
+      driveFolderUrl: org.drive_folder_url,
+    } : null
   });
 });
 

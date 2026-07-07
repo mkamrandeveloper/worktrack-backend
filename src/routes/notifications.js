@@ -68,6 +68,22 @@ router.post('/read-all', async (req, res) => {
   }
 });
 
+// ── DELETE /api/notifications/:id ─────────────────────────────────────────────
+router.delete('/:id', async (req, res) => {
+  try {
+    const existing = await dbGet(
+      'SELECT id FROM notifications WHERE id=? AND user_id=?',
+      [req.params.id, req.user.id]
+    );
+    if (!existing) return res.status(404).json({ error: 'Notification not found' });
+
+    await dbRun('DELETE FROM notifications WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Export the helper for use in other routes
 module.exports = router;
 module.exports.createNotification = createNotification;

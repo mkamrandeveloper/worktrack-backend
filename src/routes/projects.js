@@ -140,12 +140,13 @@ router.post('/', requireManagerOrAbove, async (req, res) => {
     // which would otherwise block project creation from ever completing its
     // response even though the project row is already committed.
     if (clientEmail && inviteToken) {
+      const org = await dbGet('SELECT name FROM organizations WHERE id=?', [req.user.organization_id]);
       const baseUrl = process.env.APP_BASE_URL || 'http://localhost:3001';
       sendClientInvitation({
         to: clientEmail,
         clientName: clientName || 'Client',
         projectName: name,
-        orgName: req.user.organization_name || 'WorkTrack',
+        orgName: org?.name || 'WorkTrack',
         inviteUrl: `${baseUrl}/client-portal?token=${inviteToken}`,
         inviteToken,
       }).catch((err) => console.warn('Client invitation email failed:', err.message));
@@ -205,6 +206,9 @@ router.delete('/:id', requireAdminOrAbove, async (req, res) => {
 // ── POST /api/projects/:id/members ────────────────────────────────────────────
 router.post('/:id/members', requireManagerOrAbove, async (req, res) => {
   try {
+    const project = await dbGet('SELECT id FROM projects WHERE id=? AND organization_id=?', [req.params.id, req.user.organization_id]);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
     const { userId, role } = req.body;
     await dbRun(
       'INSERT INTO project_members (project_id, user_id, role) VALUES (?, ?, ?) ON CONFLICT (project_id, user_id) DO NOTHING',
@@ -219,6 +223,9 @@ router.post('/:id/members', requireManagerOrAbove, async (req, res) => {
 // ── DELETE /api/projects/:id/members/:userId ──────────────────────────────────
 router.delete('/:id/members/:userId', requireManagerOrAbove, async (req, res) => {
   try {
+    const project = await dbGet('SELECT id FROM projects WHERE id=? AND organization_id=?', [req.params.id, req.user.organization_id]);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
     await dbRun(
       'DELETE FROM project_members WHERE project_id=? AND user_id=?',
       [req.params.id, req.params.userId]

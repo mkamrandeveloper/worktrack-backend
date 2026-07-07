@@ -5,6 +5,15 @@ const { requireAuth, requireManagerOrAbove, requireStaff, resolveTargetUserId } 
 const router = express.Router();
 router.use(requireAuth, requireStaff);
 
+// buildDailyEntry() queries attendance/time_logs/sessions by user_id alone —
+// resolveTargetUserId() lets a manager pass any ?userId=, so without this
+// check a manager in one org could read another org's timesheet data simply
+// by guessing a user id that belongs to a different organization.
+async function assertSameOrg(userId, orgId) {
+  const row = await dbGet('SELECT id FROM users WHERE id=? AND organization_id=?', [userId, orgId]);
+  return !!row;
+}
+
 const LOG_LABELS = {
   clock_in: 'Clocked In',
   clock_out: 'Clocked Out',
@@ -123,6 +132,9 @@ async function buildDailyEntry(userId, orgId, date, includeTimeline = false) {
 router.get('/daily', async (req, res) => {
   try {
     const userId = resolveTargetUserId(req);
+    if (!(await assertSameOrg(userId, req.user.organization_id))) {
+      return res.status(404).json({ error: 'User not found' });
+    }
     const date = req.query.date || new Date().toISOString().split('T')[0];
     // /daily is the dedicated single-day drill-down target — always include the
     // full chronological timeline (clock events + break pairs + task sessions).
@@ -138,6 +150,9 @@ router.get('/weekly', async (req, res) => {
   try {
     const userId = resolveTargetUserId(req);
     const orgId = req.user.organization_id;
+    if (!(await assertSameOrg(userId, orgId))) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
     // Get start of the requested week (default: current week)
     const weekStart = req.query.weekStart
@@ -175,6 +190,9 @@ router.get('/monthly', async (req, res) => {
   try {
     const userId = resolveTargetUserId(req);
     const orgId = req.user.organization_id;
+    if (!(await assertSameOrg(userId, orgId))) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
     const year = parseInt(req.query.year || new Date().getFullYear());
     const month = parseInt(req.query.month || (new Date().getMonth() + 1));

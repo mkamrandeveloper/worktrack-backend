@@ -50,7 +50,8 @@ router.patch('/:id', requireManagerOrAbove, async (req, res) => {
       'UPDATE departments SET name=COALESCE(?,name), description=COALESCE(?,description) WHERE id=? AND organization_id=?',
       [name || null, description || null, req.params.id, req.user.organization_id]
     );
-    const dep = await dbGet('SELECT * FROM departments WHERE id = ?', [req.params.id]);
+    const dep = await dbGet('SELECT * FROM departments WHERE id = ? AND organization_id=?', [req.params.id, req.user.organization_id]);
+    if (!dep) return res.status(404).json({ error: 'Department not found' });
     res.json(dep);
   } catch (err) {
     res.status(500).json({ error: err.message });

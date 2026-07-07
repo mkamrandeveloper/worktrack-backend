@@ -113,6 +113,7 @@ router.post('/employees', async (req, res) => {
       orgName: org?.name || 'WorkTrack',
       email: email.toLowerCase(),
       password,
+      loginUrl: process.env.DESKTOP_APP_DOWNLOAD_URL || 'https://github.com/mkamrandeveloper/worktrack-desktop/releases/latest',
     }).catch(err => console.warn('Email send failed:', err.message));
 
     // Create notification for the manager

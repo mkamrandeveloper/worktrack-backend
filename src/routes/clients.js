@@ -10,8 +10,11 @@ const { sendClientInvitation } = require('../services/emailService');
 const router = express.Router();
 
 // ── GET /client-portal — Public client portal page ────────────────────────────
-// This is served as a standalone HTML page (no auth required)
-router.get('/portal', async (req, res) => {
+// This is served as a standalone HTML page (no auth required). Mounted at the
+// bare '/client-portal' prefix in server.js, so this must be '/' (not
+// '/portal') — every generated invite link points at '/client-portal' with
+// no further path segment.
+router.get('/', async (req, res) => {
   const { token } = req.query;
   if (!token) return res.status(400).send('<h1>Invalid invitation link</h1>');
 
@@ -145,12 +148,13 @@ router.post('/invite', requireAuth, requireManagerOrAbove, async (req, res) => {
     const token = project.client_invite_token || uuidv4();
     await dbRun('UPDATE projects SET client_invite_token=?, client_email=? WHERE id=?', [token, clientEmail, projectId]);
 
+    const org = await dbGet('SELECT name FROM organizations WHERE id=?', [req.user.organization_id]);
     const baseUrl = process.env.APP_BASE_URL || 'http://localhost:3001';
     sendClientInvitation({
       to: clientEmail,
       clientName: clientName || 'Client',
       projectName: project.name,
-      orgName: 'WorkTrack',
+      orgName: org?.name || 'WorkTrack',
       inviteUrl: `${baseUrl}/client-portal?token=${token}`,
       inviteToken: token,
     }).catch((err) => console.warn('Client invitation email failed:', err.message));
@@ -216,7 +220,11 @@ router.post('/accept', async (req, res) => {
     res.json({
       tokens: { accessToken, refreshToken, expiresAt: Date.now() + 86400000 },
       user: { id: user.id, name: user.name, email: user.email, role: user.role, organizationId: user.organization_id },
-      organization: org ? { id: org.id, name: org.name, plan: 'professional' } : null,
+      organization: org ? {
+        id: org.id, name: org.name, plan: 'professional',
+        screenshotInterval: org.screenshot_interval, teamSize: org.team_size,
+        driveFolderUrl: org.drive_folder_url,
+      } : null,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

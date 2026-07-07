@@ -65,25 +65,6 @@ app.use('/api/clients', clientRoutes);
 app.use('/api/dashboard', require('./src/routes/dashboard'));
 app.use('/client-portal', clientRoutes); // Public portal page (no /api prefix)
 
-// ── Settings aliases (desktop app calls /api/organizations/settings) ──────────
-const { requireAuth, requireManager } = require('./src/middleware/auth');
-const { dbGet, dbRun } = require('./src/database');
-
-app.get('/api/organizations/settings', requireAuth, async (req, res) => {
-  const org = await dbGet('SELECT screenshot_interval, team_size, drive_folder_url FROM organizations WHERE id=?', [req.user.organization_id]);
-  res.json(org || { screenshot_interval: 1, team_size: 10 });
-});
-
-app.post('/api/organizations/settings', requireAuth, requireManager, async (req, res) => {
-  const { screenshotInterval, teamSize } = req.body;
-  await dbRun(
-    `UPDATE organizations SET screenshot_interval=COALESCE(?,screenshot_interval), team_size=COALESCE(?,team_size) WHERE id=?`,
-    [screenshotInterval || null, teamSize || null, req.user.organization_id]
-  );
-  const org = await dbGet('SELECT screenshot_interval, team_size FROM organizations WHERE id=?', [req.user.organization_id]);
-  res.json(org);
-});
-
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 io.on('connection', (socket) => {
   console.log(`[WS] Client connected: ${socket.id}`);
