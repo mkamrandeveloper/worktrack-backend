@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbRun, dbAll } = require('../database');
 const { generateAccessToken, generateRefreshToken } = require('../middleware/auth');
+const { isDriveConfigured, setupOrgFolders } = require('../services/driveService');
 const router = express.Router();
 
 // ── POST /api/auth/signup/create-org ─────────────────────────────────────────
@@ -31,6 +32,12 @@ router.post('/signup/create-org', async (req, res) => {
       `INSERT INTO users (id, organization_id, name, email, password_hash, role, status) VALUES (?, ?, ?, ?, ?, 'OWNER', 'ACTIVE')`,
       [userId, orgId, name, email.toLowerCase(), passwordHash]
     );
+
+    // Every org shares one pre-authorized Drive account — provision its
+    // folder structure right away, without any manual "connect" step.
+    if (isDriveConfigured()) {
+      setupOrgFolders(orgId).catch((err) => console.error('Auto Drive folder setup failed:', err.message));
+    }
 
     const user = await dbGet('SELECT * FROM users WHERE id = ?', [userId]);
     const org = await dbGet('SELECT * FROM organizations WHERE id = ?', [orgId]);

@@ -1,6 +1,5 @@
 const { google } = require('googleapis');
 const { dbGet, dbRun, dbAll } = require('../database');
-const { v4: uuidv4 } = require('uuid');
 require('dotenv').config();
 
 function getOAuthClient() {
@@ -11,13 +10,26 @@ function getOAuthClient() {
   );
 }
 
-function getDriveClient(tokens) {
+function isDriveConfigured() {
+  return !!process.env.GOOGLE_DEFAULT_REFRESH_TOKEN;
+}
+
+// Every organization shares one Google Drive account (authorized once via
+// GOOGLE_DEFAULT_REFRESH_TOKEN) — orgs are separated by folder structure
+// (WorkTrack/<Org Name>/<Employee Name>), not by separate Drive connections.
+// The googleapis client auto-refreshes the access token from the refresh
+// token on demand, so there's nothing else to manage here.
+function getDriveClient() {
+  if (!isDriveConfigured()) {
+    throw new Error('Drive is not configured on this server (missing GOOGLE_DEFAULT_REFRESH_TOKEN)');
+  }
   const auth = getOAuthClient();
-  auth.setCredentials(tokens);
+  auth.setCredentials({ refresh_token: process.env.GOOGLE_DEFAULT_REFRESH_TOKEN });
   return google.drive({ version: 'v3', auth });
 }
 
-// Generate the OAuth URL for the manager to open
+// Generate the OAuth consent URL — only needed to rotate the shared
+// account's refresh token if it's ever revoked (owner-only maintenance).
 function getAuthUrl() {
   const client = getOAuthClient();
   return client.generateAuthUrl({
@@ -30,53 +42,13 @@ function getAuthUrl() {
   });
 }
 
-// Exchange auth code for tokens and save them
-async function handleOAuthCallback(code, organizationId) {
+// Exchange a fresh auth code for a new refresh token. This does not persist
+// anything — rotating the shared account requires updating the
+// GOOGLE_DEFAULT_REFRESH_TOKEN secret and restarting the server.
+async function exchangeAuthCode(code) {
   const client = getOAuthClient();
   const { tokens } = await client.getToken(code);
-  
-  const existing = await dbGet('SELECT id FROM drive_tokens WHERE organization_id = ?', [organizationId]);
-  if (existing) {
-    await dbRun(
-      `UPDATE drive_tokens SET access_token=?, refresh_token=?, expiry_date=?, updated_at=CURRENT_TIMESTAMP WHERE organization_id=?`,
-      [tokens.access_token, tokens.refresh_token, tokens.expiry_date, organizationId]
-    );
-  } else {
-    await dbRun(
-      `INSERT INTO drive_tokens (id, organization_id, access_token, refresh_token, expiry_date) VALUES (?,?,?,?,?)`,
-      [uuidv4(), organizationId, tokens.access_token, tokens.refresh_token, tokens.expiry_date]
-    );
-  }
   return tokens;
-}
-
-async function getTokensForOrg(organizationId) {
-  const row = await dbGet('SELECT * FROM drive_tokens WHERE organization_id = ?', [organizationId]);
-  if (!row) return null;
-
-  // Auto-refresh if expired
-  const client = getOAuthClient();
-  client.setCredentials({
-    access_token: row.access_token,
-    refresh_token: row.refresh_token,
-    expiry_date: row.expiry_date
-  });
-
-  // Refresh proactively if within 5 minutes of expiry
-  if (row.expiry_date && Date.now() > row.expiry_date - 300000) {
-    try {
-      const { credentials } = await client.refreshAccessToken();
-      await dbRun(
-        `UPDATE drive_tokens SET access_token=?, expiry_date=?, updated_at=CURRENT_TIMESTAMP WHERE organization_id=?`,
-        [credentials.access_token, credentials.expiry_date, organizationId]
-      );
-      return credentials;
-    } catch (err) {
-      console.error('Token refresh failed:', err.message);
-    }
-  }
-
-  return { access_token: row.access_token, refresh_token: row.refresh_token, expiry_date: row.expiry_date };
 }
 
 // Ensure folder exists (by name under parent), create if missing
@@ -98,10 +70,7 @@ async function ensureFolder(drive, name, parentId = null) {
 
 // Setup Drive folder structure: WorkTrack > OrgName > EmployeeName
 async function setupOrgFolders(organizationId) {
-  const tokens = await getTokensForOrg(organizationId);
-  if (!tokens) throw new Error('Drive not connected for this organization');
-
-  const drive = getDriveClient(tokens);
+  const drive = getDriveClient();
   const org = await dbGet('SELECT * FROM organizations WHERE id = ?', [organizationId]);
   if (!org) throw new Error('Organization not found');
 
@@ -140,11 +109,9 @@ async function setupOrgFolders(organizationId) {
 async function setupEmployeeFolder(userId) {
   const user = await dbGet('SELECT * FROM users WHERE id = ?', [userId]);
   if (!user) throw new Error('User not found');
+  if (!isDriveConfigured()) return; // Drive not configured on this server, skip
 
-  const tokens = await getTokensForOrg(user.organization_id);
-  if (!tokens) return; // Drive not connected yet, skip
-
-  const drive = getDriveClient(tokens);
+  const drive = getDriveClient();
   const org = await dbGet('SELECT * FROM organizations WHERE id = ?', [user.organization_id]);
 
   // Ensure root and org folders exist
@@ -166,10 +133,7 @@ async function uploadScreenshot(userId, imageBuffer, filename) {
   const user = await dbGet('SELECT * FROM users WHERE id = ?', [userId]);
   if (!user) throw new Error('User not found');
 
-  const tokens = await getTokensForOrg(user.organization_id);
-  if (!tokens) throw new Error('Drive not connected');
-
-  const drive = getDriveClient(tokens);
+  const drive = getDriveClient();
 
   // Ensure employee folder
   let folderId = user.drive_folder_id;
@@ -198,11 +162,8 @@ async function uploadScreenshot(userId, imageBuffer, filename) {
 // Stream a screenshot's raw image bytes from Drive (used by the image-proxy
 // route so the app never needs to make Drive files publicly shareable —
 // access is gated by our own RBAC, not Drive's sharing settings).
-async function downloadScreenshot(organizationId, driveFileId) {
-  const tokens = await getTokensForOrg(organizationId);
-  if (!tokens) throw new Error('Drive not connected');
-
-  const drive = getDriveClient(tokens);
+async function downloadScreenshot(driveFileId) {
+  const drive = getDriveClient();
   const res = await drive.files.get(
     { fileId: driveFileId, alt: 'media' },
     { responseType: 'stream' }
@@ -211,9 +172,9 @@ async function downloadScreenshot(organizationId, driveFileId) {
 }
 
 module.exports = {
+  isDriveConfigured,
   getAuthUrl,
-  handleOAuthCallback,
-  getTokensForOrg,
+  exchangeAuthCode,
   setupOrgFolders,
   setupEmployeeFolder,
   uploadScreenshot,

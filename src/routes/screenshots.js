@@ -184,7 +184,7 @@ router.get('/:id/image', async (req, res) => {
       }
     }
 
-    const stream = await downloadScreenshot(row.org_id, row.drive_file_id);
+    const stream = await downloadScreenshot(row.drive_file_id);
     res.setHeader('Content-Type', 'image/jpeg');
     res.setHeader('Cache-Control', 'private, max-age=3600');
     stream.on('error', () => res.status(502).end());
