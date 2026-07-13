@@ -103,9 +103,14 @@ async function start() {
     console.log('✅ Database schema initialized');
 
     httpServer.listen(PORT, () => {
+      const { driveMissingVars } = require('./src/services/driveService');
+      const missing = driveMissingVars();
       console.log(`\n🚀 WorkTrack Production Backend running on http://localhost:${PORT}`);
       console.log(`   Database: PostgreSQL (${(process.env.DATABASE_URL || 'local dev').replace(/:[^:@]+@/, ':****@')})`);
-      console.log(`   Google Drive: ${process.env.GOOGLE_CLIENT_ID ? 'Configured ✅' : 'Not configured ❌'}`);
+      // A partial Drive config (e.g. only the refresh token, no client
+      // credentials) makes every screenshot upload fail with an opaque
+      // Google "invalid_request" — so name exactly what's missing here.
+      console.log(`   Google Drive: ${missing.length === 0 ? 'Configured ✅' : `NOT configured ❌ — missing: ${missing.join(', ')}`}`);
       console.log(`   Environment: ${process.env.NODE_ENV || 'development'}\n`);
     });
   } catch (err) {

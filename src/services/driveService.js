@@ -10,8 +10,18 @@ function getOAuthClient() {
   );
 }
 
+// A refresh token is worthless without the OAuth client it was issued
+// under — Google rejects a refresh with "invalid_request" if client_id/
+// client_secret are missing, which silently fails every screenshot upload.
+// So "configured" means ALL of the pieces are present, not just the token.
+// Returns the list of missing env vars (empty array = fully configured).
+function driveMissingVars() {
+  return ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REDIRECT_URI', 'GOOGLE_DEFAULT_REFRESH_TOKEN']
+    .filter((k) => !process.env[k]);
+}
+
 function isDriveConfigured() {
-  return !!process.env.GOOGLE_DEFAULT_REFRESH_TOKEN;
+  return driveMissingVars().length === 0;
 }
 
 // Every organization shares one Google Drive account (authorized once via
@@ -20,8 +30,9 @@ function isDriveConfigured() {
 // The googleapis client auto-refreshes the access token from the refresh
 // token on demand, so there's nothing else to manage here.
 function getDriveClient() {
-  if (!isDriveConfigured()) {
-    throw new Error('Drive is not configured on this server (missing GOOGLE_DEFAULT_REFRESH_TOKEN)');
+  const missing = driveMissingVars();
+  if (missing.length > 0) {
+    throw new Error(`Drive is not configured on this server (missing: ${missing.join(', ')})`);
   }
   const auth = getOAuthClient();
   auth.setCredentials({ refresh_token: process.env.GOOGLE_DEFAULT_REFRESH_TOKEN });
@@ -173,6 +184,7 @@ async function downloadScreenshot(driveFileId) {
 
 module.exports = {
   isDriveConfigured,
+  driveMissingVars,
   getAuthUrl,
   exchangeAuthCode,
   setupOrgFolders,
